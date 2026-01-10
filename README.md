@@ -1,2 +1,2 @@
 # Correlio
-First version of Correlio
+First MVP version
