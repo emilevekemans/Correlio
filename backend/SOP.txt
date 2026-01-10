@@ -25,6 +25,20 @@ http://localhost:8000/docs
 git status
 git add .
 git commit -m "Message clair"
+git push 
+
+#lister les versions sauvées
+git log --oneline
+
+#aller voir une des version
+git checkout '50ed516'
+
+#revenir a la version actuelle sans prendre en compte ce que je vais voir dans le passer
+git checkout main
+
+#revenir a la version précédente visualisée ()
+git revert d5ed516
+
 
 ##FRONTEND
 

@@ -1,5 +1,0 @@
-
-
-#lancer le front end local
-npm run dev
-
