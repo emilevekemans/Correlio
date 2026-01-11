@@ -19,9 +19,13 @@ dist/
 # Data
 # ======================
 data/
+backend/data/feedback.db
+backend/data/*.db
 
 # ======================
 # Editor / OS
 # ======================
 .vscode/
 .DS_Store
+
+
