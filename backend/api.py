@@ -13,7 +13,6 @@ from engine import load_prices, compute_payload
 
 app = FastAPI(title="Correlio API", version="0.1.0")
 
-# CORS (unchanged intent)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -28,9 +27,9 @@ DATA_PATH = os.getenv("CORRELIO_CSV_PATH", "data/prices.csv")
 # Feedback storage (SQLite)
 # =========================
 FEEDBACK_DB_PATH = os.getenv("CORRELIO_FEEDBACK_DB", "data/feedback.db")
-ADMIN_TOKEN = os.getenv("CORRELIO_ADMIN_TOKEN", "")  # required to read /feedback
+ADMIN_TOKEN = os.getenv("CORRELIO_ADMIN_TOKEN", "")  # set this in your env for /feedback GET
 
-def _ensure_feedback_db() -> None:
+def _ensure_feedback_db():
     os.makedirs(os.path.dirname(FEEDBACK_DB_PATH), exist_ok=True)
     con = sqlite3.connect(FEEDBACK_DB_PATH)
     try:
@@ -80,21 +79,18 @@ class ComputeRequest(BaseModel):
 class FeedbackRequest(BaseModel):
     message: str = Field(..., min_length=3, max_length=2000)
 
-    # optional identity (today: manual input; later: from auth)
     email: Optional[str] = Field(default=None, max_length=254)
-    provider: Optional[str] = Field(default=None, max_length=50)  # "google" | "manual"
+    provider: Optional[str] = Field(default=None, max_length=50)
     userId: Optional[str] = Field(default=None, max_length=128)
 
-    # optional context
     page: Optional[str] = Field(default=None, max_length=200)
-    selectedAssets: Optional[List[str]] = Field(default=None)
+    selectedAssets: Optional[List[str]] = Field(default=None, max_length=10)
 
     yearStart: Optional[int] = None
     yearEnd: Optional[int] = None
     capPct: Optional[float] = None
     rollingWindowMonths: Optional[int] = None
 
-    # optional raw metadata (keep small)
     metaJson: Optional[str] = Field(default=None, max_length=5000)
 
 class FeedbackRow(BaseModel):
@@ -173,9 +169,7 @@ def create_feedback(
 
     selected_assets = None
     if req.selectedAssets:
-        cleaned = [a.strip() for a in req.selectedAssets if a and a.strip()]
-        if cleaned:
-            selected_assets = ",".join(cleaned)[:1000]
+        selected_assets = ",".join([a.strip() for a in req.selectedAssets if a and a.strip()])[:1000]
 
     con = _db()
     try:
@@ -216,7 +210,6 @@ def list_feedback(
     limit: int = Query(50, ge=1, le=200),
     x_admin_token: str = Header(default="", alias="X-Admin-Token"),
 ):
-    # Minimal protection for MVP: don't expose feedback publicly
     if not ADMIN_TOKEN or x_admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
