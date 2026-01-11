@@ -66,7 +66,7 @@ function Button({
       ? "bg-slate-900 text-white hover:bg-slate-800"
       : "bg-slate-100 text-slate-900 hover:bg-slate-200";
   return (
-    <button className={`${base} ${styles}`} onClick={onClick} disabled={disabled}>
+    <button className={`${base} ${styles}`} onClick={onClick} disabled={disabled} type="button">
       {children}
     </button>
   );
@@ -74,10 +74,9 @@ function Button({
 
 /**
  * ✅ FIX INPUT NUMÉRIQUE (sans casser le fonctionnement)
- * - Permet de vider le champ (pas de "0" forcé)
- * - L'utilisateur peut taper librement
- * - Le state numérique n'est mis à jour que quand la valeur est un entier valide
- * - Si champ vide: on garde la dernière valeur valide => compute inchangé
+ * - Permet de taper librement (ex: "2000")
+ * - N’envoie au state que si la valeur est un entier valide
+ * - Sur blur, revert si invalide
  */
 function Input({
   label,
@@ -92,15 +91,14 @@ function Input({
 }) {
   const [text, setText] = useState<string>(String(value));
 
-  // Sync si value change depuis l'extérieur (ex: reload / preset)
   useEffect(() => {
     setText(String(value));
   }, [value]);
 
   const commitIfValid = (raw: string) => {
     const s = raw.trim();
-    if (s === "") return; // vide => ne force pas 0, on garde le state actuel
-    if (!/^-?\d+$/.test(s)) return; // pas un entier => on ignore côté state
+    if (s === "") return;
+    if (!/^-?\d+$/.test(s)) return;
     const n = parseInt(s, 10);
     if (!Number.isFinite(n)) return;
     onChange(n);
@@ -113,10 +111,6 @@ function Input({
         {hint ? <span className="text-xs text-slate-500">{hint}</span> : null}
       </div>
 
-      {/* IMPORTANT:
-          - type="text" + inputMode="numeric" => UX similaire à number mais sans le 0 automatique
-          - on garde une valeur texte contrôlée pour permettre l'effacement
-      */}
       <input
         className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-400"
         type="text"
@@ -129,15 +123,12 @@ function Input({
           commitIfValid(raw);
         }}
         onBlur={() => {
-          // si vide, on remet la dernière valeur valide visible
           if (text.trim() === "") {
             setText(String(value));
             return;
           }
-          // si non-vide, on commit si possible; sinon on revert visuellement
           const before = value;
           commitIfValid(text);
-          // Si c'était invalide (ex: "20a"), revert
           if (!/^-?\d+$/.test(text.trim())) {
             setText(String(before));
           }
@@ -183,18 +174,21 @@ export default function Home() {
   const [loadingCompute, setLoadingCompute] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ Feedback (modal)
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
+  const [fbEmail, setFbEmail] = useState("");
+  const [fbMessage, setFbMessage] = useState("");
+  const [fbSending, setFbSending] = useState(false);
+  const [fbStatus, setFbStatus] = useState<string | null>(null);
+
   // ✅ Recherche globale (optionnelle mais utile)
   const [assetSearch, setAssetSearch] = useState("");
-
-  // ✅ Recherche par catégorie
   const [categorySearch, setCategorySearch] = useState<Record<string, string>>({});
 
-  // ✅ Liste alpha STABLE basée sur /assets (pour couleurs chart)
   const allAssetsAlpha = useMemo(() => {
     return Array.from(new Set(assets.map((a) => a.asset))).sort();
   }, [assets]);
 
-  // ✅ MAP COULEUR STABLE (pour les charts)
   const assetColors = useMemo(() => {
     const map: Record<string, string> = {};
     allAssetsAlpha.forEach((a, i) => {
@@ -218,7 +212,6 @@ export default function Home() {
       .map(([cat, items]) => {
         const sorted = [...items].sort((x, y) => x.asset.localeCompare(y.asset));
 
-        // 1) filtre global
         const globalFiltered =
           globalQ.length === 0
             ? sorted
@@ -228,7 +221,6 @@ export default function Home() {
                 return code.includes(globalQ) || desc.includes(globalQ);
               });
 
-        // 2) filtre spécifique catégorie
         const catQ = (categorySearch[cat] ?? "").trim().toLowerCase();
         const finalFiltered =
           catQ.length === 0
@@ -309,6 +301,60 @@ export default function Home() {
     }
   };
 
+  const sendFeedback = async () => {
+    setFbStatus(null);
+
+    const msg = fbMessage.trim();
+    if (msg.length < 3) {
+      setFbStatus("Please write a short message (min 3 characters).");
+      return;
+    }
+
+    setFbSending(true);
+    try {
+      const payload = {
+        message: msg,
+        email: fbEmail.trim() || null,
+
+        // later when auth exists:
+        provider: null,
+        userId: null,
+
+        page: "/dashboard",
+        selectedAssets: selected,
+
+        yearStart,
+        yearEnd,
+        capPct,
+        rollingWindowMonths,
+
+        metaJson: JSON.stringify(
+          {
+            hasCompute: Boolean(computeJson),
+          },
+          null,
+          0
+        ),
+      };
+
+      const res = await fetch(`${API_BASE}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.detail ?? `POST /feedback failed (${res.status})`);
+
+      setFbMessage("");
+      setFbStatus("Sent ✅");
+    } catch (e: any) {
+      setFbStatus(e?.message ?? "Failed to send feedback");
+    } finally {
+      setFbSending(false);
+    }
+  };
+
   useEffect(() => {
     loadAssets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -316,7 +362,7 @@ export default function Home() {
 
   return (
     <main className="mx-auto w-full max-w-[2100px] px-4 sm:px-6 py-8">
-      <header className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <header className="relative mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-slate-600">
             CORRELIO • MVP DASHBOARD
@@ -327,6 +373,20 @@ export default function Home() {
           <p className="mt-2 text-sm text-slate-600">
             Backend: <span className="font-mono text-slate-800">{API_BASE}</span>
           </p>
+        </div>
+
+        {/* ✅ Feedback button centered (like your red rectangle) */}
+        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+          <button
+            type="button"
+            onClick={() => {
+              setFbStatus(null);
+              setIsFeedbackOpen(true);
+            }}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm hover:bg-slate-50"
+          >
+            Feedback
+          </button>
         </div>
 
         <div className="flex gap-2">
@@ -357,7 +417,6 @@ export default function Home() {
               </span>
             }
           >
-            {/* ✅ Pills neutres */}
             <div className="mb-4 flex flex-wrap gap-2">
               {selected.length === 0 ? (
                 <span className="text-sm text-slate-600">No asset selected</span>
@@ -383,7 +442,6 @@ export default function Home() {
               )}
             </div>
 
-            {/* ✅ Search global */}
             <div className="mb-3">
               <SearchInput
                 value={assetSearch}
@@ -395,7 +453,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* ✅ Categories dropdowns + per-category search */}
             <div className="max-h-[520px] overflow-auto rounded-xl border border-slate-200 bg-white p-3">
               {grouped.length === 0 ? (
                 <div className="text-sm text-slate-600">No match.</div>
@@ -404,13 +461,7 @@ export default function Home() {
                   const catQuery = categorySearch[cat] ?? "";
 
                   return (
-                    <details
-                      key={cat}
-                      className="mb-3 rounded-xl border border-slate-200 bg-slate-50"
-                      onToggle={(e) => {
-                        // Rien d’obligatoire, mais tu peux auto-focus plus tard si tu veux.
-                      }}
-                    >
+                    <details key={cat} className="mb-3 rounded-xl border border-slate-200 bg-slate-50">
                       <summary className="cursor-pointer select-none px-3 py-2 text-xs font-bold uppercase tracking-wide text-slate-800">
                         {cat}{" "}
                         <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700">
@@ -419,7 +470,6 @@ export default function Home() {
                       </summary>
 
                       <div className="p-3">
-                        {/* ✅ Barre de recherche de catégorie */}
                         <div className="mb-3 flex items-center gap-2">
                           <div className="text-[11px] font-semibold text-slate-600 uppercase tracking-wide">
                             Filter
@@ -427,9 +477,7 @@ export default function Home() {
                           <div className="flex-1">
                             <SearchInput
                               value={catQuery}
-                              onChange={(v) =>
-                                setCategorySearch((prev) => ({ ...prev, [cat]: v }))
-                              }
+                              onChange={(v) => setCategorySearch((prev) => ({ ...prev, [cat]: v }))}
                               placeholder={`Search in ${cat}...`}
                             />
                           </div>
@@ -437,9 +485,7 @@ export default function Home() {
                             <button
                               type="button"
                               className="rounded-lg bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                              onClick={() =>
-                                setCategorySearch((prev) => ({ ...prev, [cat]: "" }))
-                              }
+                              onClick={() => setCategorySearch((prev) => ({ ...prev, [cat]: "" }))}
                               title="Clear"
                             >
                               Clear
@@ -458,7 +504,6 @@ export default function Home() {
                                   key={a.asset}
                                   className="flex items-start gap-2 rounded-xl bg-white px-3 py-2 hover:bg-slate-50"
                                 >
-                                  {/* ✅ Checkbox neutre */}
                                   <input
                                     type="checkbox"
                                     checked={isOn}
@@ -496,7 +541,7 @@ export default function Home() {
             </div>
           </Card>
 
-          <Card title="Compute settings" subtitle="Minimal controls. You can move these to Advanced later.">
+          <Card title="Compute settings">
             <div className="grid gap-4">
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Year start" value={yearStart} onChange={setYearStart} />
@@ -537,9 +582,7 @@ export default function Home() {
 
         <section className="grid gap-6">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-700">
-              PERFORMANCE
-            </div>
+            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-700">PERFORMANCE</div>
             <div className="text-lg font-semibold tracking-tight text-slate-900">Yearly Returns</div>
             <div className="mt-4">
               {computeJson ? (
@@ -553,9 +596,7 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-700">
-              RELATIONSHIP
-            </div>
+            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-700">RELATIONSHIP</div>
             <div className="text-lg font-semibold tracking-tight text-slate-900">Rolling Correlation</div>
             <div className="mt-4">
               {computeJson ? (
@@ -569,9 +610,7 @@ export default function Home() {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-700">
-              MATRIX
-            </div>
+            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-700">MATRIX</div>
             <div className="text-lg font-semibold tracking-tight text-slate-900">
               Pearson Correlation Heatmap
             </div>
@@ -588,9 +627,85 @@ export default function Home() {
         </section>
       </div>
 
-      <footer className="mt-10 text-xs text-slate-600">
-        MVP UI: clean & readable. Debug can be removed later.
-      </footer>
+      <footer className="mt-10 text-xs text-slate-600">MVP UI: clean & readable. Debug can be removed later.</footer>
+
+      {/* ✅ Feedback modal */}
+      {isFeedbackOpen && (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setIsFeedbackOpen(false)}
+          />
+          <div className="absolute left-1/2 top-1/2 w-[92vw] max-w-xl -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 p-5">
+              <div>
+                <h2 className="text-base font-semibold tracking-tight text-slate-900">Feedback</h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  Email is optional. We’ll also send your current selection & settings.
+                </p>
+              </div>
+              <button
+                className="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+                onClick={() => setIsFeedbackOpen(false)}
+                aria-label="Close"
+                title="Close"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5">
+              <div className="grid gap-3">
+                <label className="grid gap-1">
+                  <span className="text-sm font-semibold text-slate-900">Email (optional)</span>
+                  <input
+                    className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-400"
+                    value={fbEmail}
+                    onChange={(e) => setFbEmail(e.target.value)}
+                    placeholder="you@email.com"
+                  />
+                </label>
+
+                <label className="grid gap-1">
+                  <span className="text-sm font-semibold text-slate-900">Message</span>
+                  <textarea
+                    className="min-h-[130px] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                    value={fbMessage}
+                    onChange={(e) => setFbMessage(e.target.value)}
+                    placeholder="Bug, idea, missing feature..."
+                  />
+                </label>
+
+                {fbStatus && (
+                  <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-800">
+                    {fbStatus}
+                  </div>
+                )}
+
+                <div className="mt-2 flex items-center justify-end gap-2">
+                  <button
+                    className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200 disabled:opacity-50"
+                    onClick={() => setIsFeedbackOpen(false)}
+                    disabled={fbSending}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                    onClick={sendFeedback}
+                    disabled={fbSending}
+                    type="button"
+                  >
+                    {fbSending ? "Sending..." : "Send"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
